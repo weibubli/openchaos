@@ -12,78 +12,76 @@
    */
 package io.openchaos.driver.etcd;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import io.etcd.jetcd.ByteSequence;
-import io.etcd.jetcd.Client;
+import io.openchaos.common.utils.ServiceUtil;
 import io.openchaos.driver.ChaosNode;
-import io.openchaos.driver.etcd.config.EtcdClientConfig;
-import io.openchaos.driver.etcd.config.EtcdConfig;
-import io.openchaos.driver.kv.KVClient;
-import io.openchaos.driver.kv.KVDriver;
 import lombok.extern.slf4j.Slf4j;
 
-import java.io.File;
-import java.io.IOException;
-import java.time.Duration;
 import java.util.List;
 
-
 @Slf4j
-public class EtcdChaosDriver implements KVDriver {
-    private EtcdConfig etcdConfig;
-    private EtcdClientConfig etcdClientConfig;
-    private List<String> endpoints;
+public class EtcdNode implements ChaosNode {
+    private static final String ETCD_PROCESS_NAME = "etcd";
 
-    private static final ObjectMapper MAPPER = new ObjectMapper(new YAMLFactory())
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+    private String node;
+    private List<String> nodes;
 
-    private EtcdConfig readConfigForEtcd(File configurationFile) throws IOException {
-        return MAPPER.readValue(configurationFile, EtcdConfig.class);
-    }
-
-    private EtcdClientConfig readEtcdClientConfig(File configurationFile) throws IOException {
-        return MAPPER.readValue(configurationFile, EtcdClientConfig.class);
+    public EtcdNode(String node, List<String> nodes) {
+        this.node = node;
+        this.nodes = nodes;
     }
 
     @Override
-    public KVClient createClient() {
-        Client client = Client.builder().endpoints(etcdConfig.getEndpoints().split(","))
-                .user(ByteSequence.from(etcdClientConfig.getUsername().getBytes()))
-                .password(ByteSequence.from(etcdClientConfig.getPassword().getBytes()))
-                .build();
-        return new EtcdChaosClient(client);
-    }
-
-    @Override
-    public void initialize(File configurationFile, List<String> nodes) throws IOException {
-        etcdConfig = this.readConfigForEtcd(configurationFile);
-        etcdClientConfig = this.readEtcdClientConfig(configurationFile);
-    }
-
-    @Override
-    public void shutdown() {
+    public void setup() {
 
     }
 
     @Override
-    public String getStateName() {
-        return "io.openchaos.driver.etcd.EtcdState";
+    public void teardown() {
+        stop();
     }
 
     @Override
-    public ChaosNode createChaosNode(String node, List<String> nodes) {
-        return new EtcdNode(node, nodes);
+    public void start() {
+        try {
+            ServiceUtil.start(this.node, ETCD_PROCESS_NAME);
+            log.info("start etcd({}) success", this.node);
+        } catch (Exception e) {
+            log.error("start etcd({}) failed. ", this.node, e);
+        }
     }
 
     @Override
-    public String getMetaNode() {
-        return etcdConfig.getEndpoints();
+    public void stop() {
+        try {
+            ServiceUtil.stop(this.node, ETCD_PROCESS_NAME);
+            log.info("stop etcd({}) success", this.node);
+        } catch (Exception e) {
+            log.error("stop etcd({}) failed. ", this.node, e);
+        }
     }
 
     @Override
-    public String getMetaData() {
-        return "username:" + etcdClientConfig.getUsername() + ",password:" + etcdClientConfig.getPassword();
+    public void kill() {
+        try {
+            ServiceUtil.stop(this.node, ETCD_PROCESS_NAME);
+            log.info("kill etcd({}) success", this.node);
+        } catch (Exception e) {
+            log.error("kill etcd({}) failed. ", this.node, e);
+        }
+    }
+
+    @Override
+    public void killByPort(String port) {
+
+    }
+
+    @Override
+    public void pause() {
+        stop();
+    }
+
+    @Override
+    public void resume() {
+        start();
     }
 }
