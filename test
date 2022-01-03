@@ -12,91 +12,78 @@
    */
 package io.openchaos.driver.etcd;
 
-import com.google.common.base.Charsets;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import io.etcd.jetcd.ByteSequence;
 import io.etcd.jetcd.Client;
-import io.etcd.jetcd.KV;
-import io.etcd.jetcd.KeyValue;
-import io.etcd.jetcd.kv.GetResponse;
-import io.etcd.jetcd.kv.PutResponse;
-import io.openchaos.common.InvokeResult;
+import io.openchaos.driver.ChaosNode;
+import io.openchaos.driver.etcd.config.EtcdClientConfig;
+import io.openchaos.driver.etcd.config.EtcdConfig;
 import io.openchaos.driver.kv.KVClient;
+import io.openchaos.driver.kv.KVDriver;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.LinkedList;
+import java.io.File;
+import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
-import java.util.Optional;
-import java.util.concurrent.ExecutionException;
+
 
 @Slf4j
-public class EtcdChaosClient implements KVClient {
+public class EtcdChaosDriver implements KVDriver {
+    private EtcdConfig etcdConfig;
+    private EtcdClientConfig etcdClientConfig;
+    private List<String> endpoints;
 
-    private Client client;
+    private static final ObjectMapper MAPPER = new ObjectMapper(new YAMLFactory())
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public EtcdChaosClient(Client client) {
-        this.client = client;
+    private EtcdConfig readConfigForEtcd(File configurationFile) throws IOException {
+        return MAPPER.readValue(configurationFile, EtcdConfig.class);
     }
 
-    public Client getClient() {
-        return client;
-    }
-
-    @Override
-    public void start() {
-
-    }
-
-    @Override
-    public void close() {
-        Optional.ofNullable(client).ifPresent(c -> c.close());
-        log.info("close etcd client");
+    private EtcdClientConfig readEtcdClientConfig(File configurationFile) throws IOException {
+        return MAPPER.readValue(configurationFile, EtcdClientConfig.class);
     }
 
     @Override
-    public InvokeResult put(Optional<String> key, String value) {
-        try {
-            PutResponse response = client.getKVClient()
-                    .put(ByteSequence.from(key.get()+value, Charsets.UTF_8), ByteSequence.from(value, Charsets.UTF_8)).get();
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("etcd put failed.", e);
-            return InvokeResult.FAILURE;
-        }
-        return InvokeResult.SUCCESS;
+    public KVClient createClient() {
+        Client client = Client.builder().endpoints(etcdConfig.getEndpoints().split(","))
+                .user(ByteSequence.from(etcdClientConfig.getUsername().getBytes()))
+                .password(ByteSequence.from(etcdClientConfig.getPassword().getBytes()))
+                .build();
+        return new EtcdChaosClient(client);
     }
 
     @Override
-    public List<String> getAll(Optional<String> key, int putInvokeCount) {
-        List<String> results = new LinkedList<>();
-        KV kv = client.getKVClient();
-
-        try {
-            for(int i = 0; i < putInvokeCount; i++) {
-                GetResponse response = kv.get(ByteSequence.from(key.get() + i, Charsets.UTF_8)).get();
-                if (response.getKvs().isEmpty()) {
-                    continue;
-                }
-                for(KeyValue keyValue : response.getKvs()) {
-                    results.add(keyValue.getValue().toString(Charsets.UTF_8));
-                }
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("get etcd key failed.", e);
-        }
-        return results;
+    public void initialize(File configurationFile, List<String> nodes) throws IOException {
+        etcdConfig = this.readConfigForEtcd(configurationFile);
+        etcdClientConfig = this.readEtcdClientConfig(configurationFile);
     }
 
     @Override
-    public List<String> getAll(Optional<String> key) {
-        List<String> results = new LinkedList<>();
-        try {
-            GetResponse response = client.getKVClient()
-                    .get(ByteSequence.from(key.get(), Charsets.UTF_8)).get();
-            for(KeyValue keyValue : response.getKvs()) {
-                results.add(keyValue.getValue().toString(Charsets.UTF_8));
-            }
-        } catch (InterruptedException | ExecutionException e) {
-            log.error("get etcd ket failed. ", e);
-        }
-        return results;
+    public void shutdown() {
+
+    }
+
+    @Override
+    public String getStateName() {
+        return "io.openchaos.driver.etcd.EtcdState";
+    }
+
+    @Override
+    public ChaosNode createChaosNode(String node, List<String> nodes) {
+        return new EtcdNode(node, nodes);
+    }
+
+    @Override
+    public String getMetaNode() {
+        return etcdConfig.getEndpoints();
+    }
+
+    @Override
+    public String getMetaData() {
+        return "username:" + etcdClientConfig.getUsername() + ",password:" + etcdClientConfig.getPassword();
     }
 }
