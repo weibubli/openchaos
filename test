@@ -12,76 +12,70 @@
    */
 package io.openchaos.driver.etcd;
 
-import io.openchaos.common.utils.ServiceUtil;
-import io.openchaos.driver.ChaosNode;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.util.List;
+import java.net.URI;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ExecutionException;
 
-@Slf4j
-public class EtcdNode implements ChaosNode {
-    private static final String ETCD_PROCESS_NAME = "etcd";
+import io.etcd.jetcd.ByteSequence;
+import io.etcd.jetcd.Client;
+import io.etcd.jetcd.Cluster;
+import io.etcd.jetcd.cluster.Member;
+import io.etcd.jetcd.cluster.MemberListResponse;
+import io.etcd.jetcd.maintenance.StatusResponse;
+import io.openchaos.driver.ChaosState;
 
-    private String node;
-    private List<String> nodes;
+public class EtcdState implements ChaosState {
+    private static final Logger log = LoggerFactory.getLogger(EtcdState.class);
+    private Client client;
+    private String[] metaNode;
 
-    public EtcdNode(String node, List<String> nodes) {
-        this.node = node;
-        this.nodes = nodes;
+
+    @Override
+    public void initialize(String metaData, String metaNode) {
+        String username = metaData.split(",")[0].split(":")[1];
+        String password = metaData.split(",")[1].split(":")[1];
+        this.metaNode = metaNode.split(",");
+        this.client = Client.builder().endpoints(this.metaNode)
+            .user(ByteSequence.from(username.getBytes()))
+            .password(ByteSequence.from(password.getBytes()))
+            .build();
+
     }
 
     @Override
-    public void setup() {
-
-    }
-
-    @Override
-    public void teardown() {
-        stop();
-    }
-
-    @Override
-    public void start() {
+    public Set<String> getLeader() {
+        Set<String> leaderAddr = new HashSet<>();
         try {
-            ServiceUtil.start(this.node, ETCD_PROCESS_NAME);
-            log.info("start etcd({}) success", this.node);
-        } catch (Exception e) {
-            log.error("start etcd({}) failed. ", this.node, e);
+            StatusResponse statusResponse = client.getMaintenanceClient().statusMember(
+                URI.create(metaNode[1])).get();
+            if (statusResponse != null) {
+                long leaderId = statusResponse.getLeader();
+                Cluster clusterClient = client.getClusterClient();
+                MemberListResponse memberListResponse = clusterClient.listMember().get();
+                for (Member member : memberListResponse.getMembers()) {
+                    if (member.getId() == leaderId) {
+                        for (URI uri : member.getPeerURIs()) {
+                            leaderAddr.add(uri.toString().replace("http://",""));
+                        }
+                    }
+                }
+            }
+        } catch (InterruptedException | ExecutionException e) {
+            e.printStackTrace();
+            log.error("EtcdState, get leader node error!");
         }
+        return leaderAddr;
     }
 
     @Override
-    public void stop() {
-        try {
-            ServiceUtil.stop(this.node, ETCD_PROCESS_NAME);
-            log.info("stop etcd({}) success", this.node);
-        } catch (Exception e) {
-            log.error("stop etcd({}) failed. ", this.node, e);
+    public void close() {
+        if (client != null) {
+            client.close();
         }
-    }
-
-    @Override
-    public void kill() {
-        try {
-            ServiceUtil.stop(this.node, ETCD_PROCESS_NAME);
-            log.info("kill etcd({}) success", this.node);
-        } catch (Exception e) {
-            log.error("kill etcd({}) failed. ", this.node, e);
-        }
-    }
-
-    @Override
-    public void killByPort(String port) {
-
-    }
-
-    @Override
-    public void pause() {
-        stop();
-    }
-
-    @Override
-    public void resume() {
-        start();
     }
 }
